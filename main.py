@@ -1,5 +1,7 @@
 import logging
 import os
+import threading
+from http.server import HTTPServer, BaseHTTPRequestHandler
 from typing import Dict
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, ReplyKeyboardMarkup, KeyboardButton, InputMediaPhoto
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, MessageHandler, ContextTypes, filters
@@ -11,6 +13,24 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    """Простой HTTP handler для health check"""
+    def do_GET(self):
+        self.send_response(200)
+        self.send_header('Content-type', 'text/plain')
+        self.end_headers()
+        self.wfile.write(b'OK')
+    
+    def log_message(self, format, *args):
+        # Отключаем логирование HTTP запросов
+        pass
+
+
+def start_health_server(port: int):
+    """Запускает HTTP сервер для health check в отдельном потоке"""
+    server = HTTPServer(('0.0.0.0', port), HealthCheckHandler)
+    logger.info(f"Health check server started on port {port}")
+    server.serve_forever()
 
 # Структуры данных
 # polls: {poll_id: {question, options: {opt_id: {text, votes: {user_id: name}}}, creator_id, messages: List[{chat_id,message_id}], is_creating}}
@@ -321,6 +341,21 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         poll["messages"].append({"chat_id": target_chat, "message_id": sent.message_id})
         await query.answer("Опрос отправлен", show_alert=False)
 
+async def getchatid(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Показывает chat_id текущего чата или группы"""
+    chat_id = update.effective_chat.id
+    chat_type = update.effective_chat.type
+    chat_title = update.effective_chat.title or "личный чат"
+    
+    await update.message.reply_text(
+        f"📋 Информация о чате:\n\n"
+        f"Название: {chat_title}\n"
+        f"Тип: {chat_type}\n"
+        f"Chat ID: <code>{chat_id}</code>\n\n"
+        f"Используйте этот ID для команды /share:\n"
+        f"<code>/share {chat_id}</code>",
+        parse_mode=ParseMode.HTML
+    )
 
 async def share(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Отправляет последний созданный опрос автора в указанный chat_id (кнопки сохраняются)"""
@@ -382,7 +417,12 @@ def main() -> None:
     app.add_handler(CallbackQueryHandler(button_callback))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
-
+ 
+    # Запускаем HTTP сервер для health check (Render требует открытый порт)
+    port = int(os.getenv("PORT", 8000))
+    health_thread = threading.Thread(target=start_health_server, args=(port,), daemon=True)
+    health_thread.start()
+    
     logger.info("Бот запущен...")
     app.run_polling(
         allowed_updates=Update.ALL_TYPES,
