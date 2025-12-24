@@ -373,6 +373,7 @@ def main() -> None:
     token = os.getenv("BOT_TOKEN")
     if not token:
         raise RuntimeError("BOT_TOKEN не задан. Установите переменную окружения BOT_TOKEN или добавьте её в .env")
+    
     app = Application.builder().token(token).build()
 
     app.add_handler(CommandHandler("start", start))
@@ -383,7 +384,10 @@ def main() -> None:
     app.add_handler(MessageHandler(filters.PHOTO, handle_photo))
 
     logger.info("Бот запущен...")
-    app.run_polling(allowed_updates=Update.ALL_TYPES)
+    app.run_polling(
+        allowed_updates=Update.ALL_TYPES,
+        drop_pending_updates=True
+    )
 
 
 if __name__ == "__main__":
