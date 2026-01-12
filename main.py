@@ -239,7 +239,46 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
                 # если сообщение удалить нельзя (например, нет доступа), просто пропускаем
                 continue
         return
-
+ # Пересылка готового опроса в преднастроенные чаты (доступно после публикации)
+    if data.startswith("sharetofixed_"):
+        try:
+            poll_id, cid = data.replace("sharetofixed_", "", 1).split("|", 1)
+            target_chat = int(cid)
+        except ValueError:
+            await query.answer("Неверные данные для пересылки", show_alert=True)
+            return
+        if poll_id not in polls:
+            await query.answer("Опрос не найден", show_alert=True)
+            return
+        poll = polls[poll_id]
+        if poll["is_creating"]:
+            await query.answer("Сначала завершите создание опроса", show_alert=True)
+            return
+        # Разрешаем пересылку только автору опроса, чтобы избежать спама
+        if user_id != poll["creator_id"]:
+            await query.answer("Только автор опроса может пересылать его", show_alert=True)
+            return
+        text = format_poll(poll_id)
+        # В пересланных чатах кнопки пересылки не показываем
+        kb = build_keyboard(poll_id, is_creating=False, current_chat_id=target_chat)
+        try:
+            if poll.get("photo_file_id"):
+                sent = await context.bot.send_photo(
+                    chat_id=target_chat,
+                    photo=poll["photo_file_id"],
+                    caption=text,
+                    reply_markup=kb,
+                    parse_mode=ParseMode.HTML,
+                )
+            else:
+                sent = await context.bot.send_message(chat_id=target_chat, text=text, reply_markup=kb, parse_mode=ParseMode.HTML)
+        except Exception:
+            await query.answer("Не удалось отправить (проверьте chat_id и права бота)", show_alert=True)
+            return
+        poll["messages"].append({"chat_id": target_chat, "message_id": sent.message_id})
+        await query.answer("Опрос отправлен", show_alert=False)
+        return
+    
     # Действия только для создателя
     if user_id not in creation_states:
         await query.answer("Нет активного черновика. /createpoll", show_alert=True)
@@ -279,6 +318,7 @@ async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) ->
         last_poll_by_creator[user_id] = poll_id
         text = format_poll(poll_id)
         # При публикации показываем кнопки пересылки только в оригинальном чате
+        
         kb = build_keyboard(poll_id, is_creating=False, current_chat_id=query.message.chat.id)
         if poll.get("photo_file_id"):
             sent = await context.bot.send_photo(
